@@ -7,7 +7,36 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
 
+app.use(express.json());
+
+// Разрешаем CORS, чтобы сайты могли делиться сохранениями
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  next();
+});
+
 app.use(express.static(path.join(__dirname, 'public')));
+
+const cloudSaves = {};
+
+app.post('/api/save', (req, res) => {
+  const { userId, data } = req.body;
+  if (userId && data) {
+    cloudSaves[userId] = data;
+    return res.json({ success: true });
+  }
+  res.status(400).json({ success: false });
+});
+
+app.get('/api/load/:userId', (req, res) => {
+  const { userId } = req.params;
+  if (cloudSaves[userId]) {
+    return res.json({ success: true, data: cloudSaves[userId] });
+  }
+  res.json({ success: false, data: null });
+});
 
 let waitingPlayer = null;
 
@@ -21,14 +50,11 @@ io.on('connection', (socket) => {
       const p2 = socket;
 
       waitingPlayer = null;
-
       p1.join(roomName);
       p2.join(roomName);
 
-      // Игрок 1 начинает слева, Игрок 2 тоже со своей точки зрения видит себя слева
       io.to(p1.id).emit('match_found', { room: roomName, role: 'p1', enemyData: playerData });
       io.to(p2.id).emit('match_found', { room: roomName, role: 'p2', enemyData: playerData });
-      console.log(`Сетевой матч создан: ${roomName}`);
     } else {
       waitingPlayer = socket;
       socket.emit('waiting_for_opponent');
@@ -42,7 +68,6 @@ io.on('connection', (socket) => {
   });
 
   socket.on('spawn_unit', (data) => {
-    // Пересылаем данные хода противнику в комнате
     socket.to(data.room).emit('opponent_spawn', data);
   });
 
@@ -50,7 +75,6 @@ io.on('connection', (socket) => {
     if (waitingPlayer && waitingPlayer.id === socket.id) {
       waitingPlayer = null;
     }
-    console.log(`Игрок отключился: ${socket.id}`);
   });
 });
 

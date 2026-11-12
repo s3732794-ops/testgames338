@@ -69,7 +69,7 @@
 
   .btn-nav { padding: 9px 16px; background: var(--panel-light); font-size: 14px; }
   .btn-nav.active { background: var(--btn-blue); }
-  .btn-reset { padding: 9px 12px; background: #7f1d1d; font-size: 12px; }
+  .btn-cloud { padding: 9px 12px; background: #065f46; font-size: 12px; border: 1px solid #10b981; }
 
   .battle-modes-box { display: flex; gap: 8px; align-items: center; }
   .battle-launch-box {
@@ -207,16 +207,9 @@
 
   .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.75); z-index: 100; align-items: center; justify-content: center; padding: 20px; }
   .modal-overlay.open { display: flex; }
-  .modal-box { background: var(--panel); border-radius: 14px; max-width: 520px; width: 100%; padding: 22px; border: 2px solid #475569; max-height: 90vh; overflow-y: auto; }
+  .modal-box { background: var(--panel); border-radius: 14px; max-width: 480px; width: 100%; padding: 22px; border: 2px solid #475569; text-align: center; }
   .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
   .modal-close { background: #dc2626; padding: 6px 12px; font-size: 14px; }
-  .preview-top { display: flex; gap: 16px; align-items: center; background: #131720; padding: 14px; border-radius: 10px; margin-bottom: 14px; }
-  .preview-top img { width: 95px; height: 95px; object-fit: contain; }
-  .preview-desc { font-size: 13px; color: #cbd5e1; line-height: 1.45; margin-bottom: 14px; background: var(--panel-light); padding: 10px; border-radius: 8px; }
-  .stats-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-  .stats-table td { padding: 7px 10px; border-bottom: 1px solid #334155; }
-  .stats-table td:first-child { color: var(--muted); font-weight: 600; }
-  .stats-table td:last-child { text-align: right; font-weight: 700; color: #f8fafc; }
 
   .battle-result {
     position: absolute;
@@ -253,7 +246,7 @@
       <button class="btn-matchmaking" onclick="findMultiplayerMatch()">Найти противника</button>
     </div>
 
-    <button class="btn-reset" onclick="resetProgress()" title="Сбросить прогресс">🔄 Сброс</button>
+    <button class="btn-cloud" onclick="syncWithOldServer(true)" title="Загрузить со старого сайта">☁️ Облако</button>
   </div>
 </header>
 
@@ -311,7 +304,7 @@
 </div>
 
 <div class="modal-overlay" id="preview-modal" onclick="closePreview(event)">
-  <div class="modal-box" onclick="event.stopPropagation()">
+  <div class="modal-box" onclick="event.stopPropagation()" style="text-align: left;">
     <div class="modal-header">
       <h2 id="m-title" style="font-size: 20px;">Карта</h2>
       <button class="modal-close" onclick="closePreview()">✕ Закрыть</button>
@@ -366,30 +359,65 @@ let state = {
 
 CARDS_DB.forEach(c => { state.levels[c.id] = 1; });
 
+let userId = localStorage.getItem('castle_lanes_userid');
+if (!userId) {
+  userId = 'user_' + Math.random().toString(36).substring(2) + Date.now().toString(36);
+  localStorage.setItem('castle_lanes_userid', userId);
+}
+
+const LOCAL_KEY = 'castle_lanes_cross_server_sync';
+const OLD_SERVER_URL = 'https://testgames338.onrender.com';
+
 function saveGame() {
-  try { localStorage.setItem('castle_lanes_save_mp_v2', JSON.stringify(state)); } catch (e) {}
+  try {
+    localStorage.setItem(LOCAL_KEY, JSON.stringify(state));
+    fetch('/api/save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId, data: state })
+    }).catch(() => {});
+  } catch (e) {}
 }
 
 function loadGame() {
   try {
-    const saved = localStorage.getItem('castle_lanes_save_mp_v2');
+    const saved = localStorage.getItem(LOCAL_KEY);
     if (saved) {
-      const parsed = JSON.parse(saved);
-      if (parsed.coins !== undefined) state.coins = parsed.coins;
-      if (parsed.castleLevel !== undefined) state.castleLevel = parsed.castleLevel;
-      if (parsed.currentStage !== undefined) state.currentStage = parsed.currentStage;
-      if (parsed.maxUnlockedStage !== undefined) state.maxUnlockedStage = parsed.maxUnlockedStage;
-      if (parsed.deck) state.deck = parsed.deck;
-      if (parsed.levels) Object.assign(state.levels, parsed.levels);
+      applyLoadedState(JSON.parse(saved));
     }
   } catch (e) {}
+
+  // Автоматически тянем со старого сайта при старте
+  syncWithOldServer(false);
 }
 
-function resetProgress() {
-  if (confirm('Сбросить весь прогресс?')) {
-    localStorage.removeItem('castle_lanes_save_mp_v2');
-    location.reload();
+function applyLoadedState(parsed) {
+  if (parsed && parsed.levels) {
+    if (parsed.coins !== undefined) state.coins = parsed.coins;
+    if (parsed.castleLevel !== undefined) state.castleLevel = parsed.castleLevel;
+    if (parsed.currentStage !== undefined) state.currentStage = parsed.currentStage;
+    if (parsed.maxUnlockedStage !== undefined) state.maxUnlockedStage = parsed.maxUnlockedStage;
+    if (parsed.deck) state.deck = parsed.deck;
+    if (parsed.levels) Object.assign(state.levels, parsed.levels);
+    renderDeckScreen();
   }
+}
+
+function syncWithOldServer(showAlert = false) {
+  fetch(`${OLD_SERVER_URL}/api/load/${userId}`)
+    .then(res => res.json())
+    .then(res => {
+      if (res.success && res.data) {
+        applyLoadedState(res.data);
+        localStorage.setItem(LOCAL_KEY, JSON.stringify(res.data));
+        if (showAlert) alert('Прогресс успешно загружен со старого сайта testgames338!');
+      } else if (showAlert) {
+        alert('На старом сервере нет сохранений. Возможно, старый сервер заснул — подождите полминуты и попробуйте снова.');
+      }
+    })
+    .catch(() => {
+      if (showAlert) alert('Не удалось связаться со старым сервером (возможно, он в спящем режиме).');
+    });
 }
 
 loadGame();
@@ -585,9 +613,9 @@ const LANE_Y = [95, 225, 355];
 
 let battle = {
   active: false,
-  mode: 'campaign', // 'campaign' | 'multiplayer'
+  mode: 'campaign',
   room: null,
-  role: 'p1', // 'p1' | 'p2'
+  role: 'p1',
   stage: 1,
   myCastleHP: 1000,
   myCastleMaxHP: 1000,
@@ -606,8 +634,8 @@ function startCampaignBattle() {
   if (state.deck.length === 0) { alert('Добавьте карты в колоду!'); return; }
   battle.mode = 'campaign';
   battle.role = 'p1';
-  const stageNum = state.currentStage;
-  initBattleSetup(`Кампания — Уровень ${stageNum}`, stageNum, stageNum);
+  battle.stage = state.currentStage;
+  initBattleSetup(`Кампания — Уровень ${battle.stage}`, state.castleLevel, battle.stage);
 }
 
 function findMultiplayerMatch() {
@@ -625,15 +653,14 @@ socket.on('waiting_for_opponent', () => {
 socket.on('match_found', (data) => {
   battle.mode = 'multiplayer';
   battle.room = data.room;
-  battle.role = data.role; // 'p1' или 'p2'
+  battle.role = data.role;
   const enemyCastleLvl = data.enemyData.castleLevel || 1;
   initBattleSetup('Сетевой бой 1v1', state.castleLevel, enemyCastleLvl);
 });
 
 socket.on('opponent_spawn', (data) => {
-  // Противник на своей стороне поставил юнита. Для нас он зеркалится по координате поля (18 - tileX)
   const mirroredTileX = 18 - data.tileX;
-  spawnUnitInternal(data.cardId, 'enemy', data.lane, mirroredTileX, data.lvl, false);
+  spawnUnitInternal(data.cardId, 'enemy', data.lane, mirroredTileX, data.lvl, true);
 });
 
 function initBattleSetup(titleText, pLvl, eLvl) {
@@ -688,7 +715,6 @@ function finishBattle(playerWon) {
         nextBtn.style.display = 'none';
       }
     } else {
-      // Награда за реального игрока по сети: от 1,000 до 1,000,000 монет случайным образом
       reward = Math.floor(Math.random() * (1000000 - 1000 + 1)) + 1000;
       nextBtn.style.display = 'none';
     }
@@ -740,11 +766,11 @@ function spawnCard(cardId, side, lane, tileX, lvl, emitNet = true) {
   spawnUnitInternal(cardId, side, lane, tileX, lvl, true);
 }
 
-function spawnUnitInternal(cardId, side, lane, tileX, lvl, isBaseUnit) {
+function spawnUnitInternal(cardId, side, lane, tileX, lvl, expandSpells) {
   const card = CARDS_DB.find(c => c.id === cardId);
   if (!card) return;
 
-  if (card.type === 'spell_spawn' && isBaseUnit) {
+  if (card.type === 'spell_spawn' && expandSpells) {
     const baseUnit = CARDS_DB.find(u => u.id === card.spawnUnitId);
     for (let l = 0; l < 3; l++) {
       for (let i = 0; i < card.perLane; i++) {
@@ -752,7 +778,7 @@ function spawnUnitInternal(cardId, side, lane, tileX, lvl, isBaseUnit) {
         createUnitInstance(baseUnit, side, l, Math.max(0.2, Math.min(17.8, offset)), lvl);
       }
     }
-  } else {
+  } else if (card.type === 'unit') {
     createUnitInstance(card, side, lane, tileX, lvl);
   }
 }
@@ -800,7 +826,6 @@ canvas.addEventListener('click', (e) => {
   if (clickY < 160) lane = 0;
   else if (clickY > 290) lane = 2;
 
-  // Игрок всегда ставит карты только на своей половине (от 0.5 до 8.5 клетки слева)
   let tileX = (clickX - LEFT_CASTLE_X) / TILE_PX;
   tileX = Math.max(0.5, Math.min(8.5, tileX));
 
